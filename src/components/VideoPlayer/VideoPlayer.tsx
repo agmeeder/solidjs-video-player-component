@@ -1,10 +1,18 @@
+/**
+ * This Solid-JS Video Player Component is based on the excelent video https://youtu.be/ZeNyjnneq_w by Web Dev Simplified.
+ */
 import { Component, createSignal, onMount, Show } from 'solid-js'
 import { PlayIcon, MuteIcon, ClosedCaptionIcon, MiniPlayerIcon, TheaterIcon, FullScreenIcon } from './VideoPlayerIcons'
 
 import './VideoPlayer.css'
 
-export interface VideoPlayerProps {
-	src: string
+export interface VideoPlayerOptions {
+	src?: string
+	captions?: boolean
+	playSpeed?: boolean
+	miniPlayerMode?: boolean
+	theaterMode?: boolean
+	fullScreenMode?: boolean
 }
 
 export enum VolumeLevels {
@@ -13,12 +21,23 @@ export enum VolumeLevels {
 	MUTED = 'muted',
 }
 
-const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
+const defaultOptions: VideoPlayerOptions = {
+	fullScreenMode: true,
+	miniPlayerMode: true,
+	theaterMode: true,
+}
+
+const VideoPlayer: Component<VideoPlayerOptions> = (options: VideoPlayerOptions = { ...defaultOptions }) => {
 	let video: HTMLVideoElement | undefined
 	let videoContainer: HTMLDivElement | undefined
+	let previewImg: HTMLImageElement | undefined
+	let thumbnailImg: HTMLImageElement | undefined
+	let timelineContainer: HTMLDivElement | undefined
 
 	const [paused, setPaused] = createSignal(true)
+	const [wasPaused, setWasPaused] = createSignal(false)
 	const [caption, setCaption] = createSignal(false)
+	const [playbackRate, setPlaybackRate] = createSignal(1)
 	const [miniPlayer, setMiniPlayer] = createSignal(false)
 	const [theater, setTheater] = createSignal(false)
 	const [fullScreen, setFullScreen] = createSignal(false)
@@ -26,6 +45,7 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 	const [volumeLevel, setVolumeLevel] = createSignal(VolumeLevels.HIGH)
 	const [currentTime, setCurrentTime] = createSignal(0)
 	const [totalTime, setTotalTime] = createSignal(0)
+	const [scrubbing, setScrubbing] = createSignal(false)
 
 	const togglePlay = () => {
 		video!.paused ? video!.play() : video!.pause()
@@ -33,21 +53,53 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 
 	const toggleMute = () => {
 		video!.muted = !video!.muted
+		if (video!.muted) {
+			setVolumeLevel(VolumeLevels.MUTED)
+		} else if (volume() >= 0.5) {
+			setVolumeLevel(VolumeLevels.HIGH)
+		} else {
+			setVolumeLevel(VolumeLevels.LOW)
+		}
 	}
 
 	const volumeChange = (e: Event) => {
-		video!.volume = parseFloat((e.target as HTMLInputElement).value)
-		video!.muted = (e.target as HTMLInputElement).value === '0'
-		setVolume(video!.volume)
+		const newVolume = parseFloat((e.target as HTMLInputElement).value)
+
+		if (newVolume === 0) {
+			toggleMute()
+		} else {
+			if (video!.muted) toggleMute()
+			setVolume(newVolume)
+
+			if (newVolume >= 0.5) {
+				setVolumeLevel(VolumeLevels.HIGH)
+			} else {
+				setVolumeLevel(VolumeLevels.LOW)
+			}
+
+			video!.volume = newVolume
+		}
 	}
 
 	const toggleCaption = () => {
-		setCaption(!caption())
+		if (options.captions) {
+			const isHidden = video!.textTracks[0].mode === 'hidden'
+			video!.textTracks[0].mode = isHidden ? 'showing' : 'hidden'
+			setCaption(isHidden)
+		}
+	}
+
+	const changePlaybackSpeed = () => {
+		setPlaybackRate(playbackRate() + 0.25)
+		if (playbackRate() > 2) setPlaybackRate(0.25)
+		video!.playbackRate = playbackRate()
 	}
 
 	const toggleTheaterMode = () => {
-		setFullScreen(false)
-		setTheater(!theater())
+		if (options.theaterMode) {
+			setFullScreen(false)
+			setTheater(!theater())
+		}
 	}
 
 	const toggleFullScreenMode = () => {
@@ -59,10 +111,12 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 	}
 
 	const toggleMiniPlayerMode = () => {
-		if (document.pictureInPictureElement) {
-			document.exitPictureInPicture()
-		} else {
-			if (document.pictureInPictureEnabled) video?.requestPictureInPicture()
+		if (options.miniPlayerMode) {
+			if (document.pictureInPictureElement) {
+				document.exitPictureInPicture()
+			} else {
+				if (document.pictureInPictureEnabled) video?.requestPictureInPicture()
+			}
 		}
 	}
 
@@ -85,7 +139,41 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 		video!.currentTime += seconds
 	}
 
+	const toggleScrubbing = (e: MouseEvent) => {
+		const rect = timelineContainer!.getBoundingClientRect()
+		const percent = Math.min(Math.max(0, e.x - rect.x), rect.width) / rect.width
+		setScrubbing((e.buttons & 1) === 1)
+
+		if (scrubbing()) {
+			setWasPaused(video!.paused)
+			video!.pause()
+		} else {
+			video!.currentTime = percent * video!.duration
+			if (!wasPaused()) video!.play()
+		}
+
+		handleTimelineUpdate(e)
+	}
+
+	const handleTimelineUpdate = (e: MouseEvent) => {
+		const rect = timelineContainer!.getBoundingClientRect()
+		const percent = Math.min(Math.max(0, e.x - rect.x), rect.width) / rect.width
+		const previewImgNumber = Math.max(1, Math.floor((percent * video!.duration) / 10))
+		const previewImgSrc = `src/assets/previewImgs/preview${previewImgNumber}.jpg`
+		previewImg!.src = previewImgSrc
+		timelineContainer!.style.setProperty('--preview-position', percent.toString())
+
+		if (scrubbing()) {
+			e.preventDefault()
+			thumbnailImg!.src = previewImgSrc
+			timelineContainer!.style.setProperty('--progress-position', percent.toString())
+		}
+	}
+
 	onMount(() => {
+		video!.textTracks[0].mode = 'hidden'
+		setPlaybackRate(video!.playbackRate)
+
 		document.addEventListener('keydown', e => {
 			const tagName = document.activeElement?.tagName.toLowerCase()
 
@@ -96,6 +184,9 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 					if (tagName === 'button') return
 				case 'k':
 					togglePlay()
+					break
+				case 'c':
+					toggleCaption()
 					break
 				case 'f':
 					toggleFullScreenMode()
@@ -124,11 +215,20 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 			setTheater(false)
 			setFullScreen(document.fullscreenElement !== null)
 		})
+		document.addEventListener('mouseup', e => {
+			if (scrubbing()) toggleScrubbing(e)
+		})
+		document.addEventListener('mousemove', e => {
+			if (scrubbing()) handleTimelineUpdate(e)
+		})
+
 		video?.addEventListener('loadeddata', () => {
 			setTotalTime(video!.duration)
 		})
 		video?.addEventListener('timeupdate', () => {
 			setCurrentTime(video!.currentTime)
+			const percent = video!.currentTime / video!.duration
+			timelineContainer!.style.setProperty('--progress-position', percent.toString())
 		})
 		video?.addEventListener('click', () => togglePlay())
 		video?.addEventListener('play', () => setPaused(false))
@@ -142,15 +242,26 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 			ref={videoContainer}
 			class='video-container'
 			classList={{
-				paused: paused(),
 				'mini-player': miniPlayer(),
-				theater: theater(),
 				'full-screen': fullScreen(),
+				paused: paused(),
+				theater: theater(),
 				caption: caption(),
+				scrubbing: scrubbing(),
 			}}
 			data-volume-level={volumeLevel().valueOf()}>
+			<img ref={thumbnailImg} class='thumbnail-img'></img>
 			<div class='video-controls-container'>
-				<div class='timeline-container'></div>
+				<div
+					ref={timelineContainer}
+					class='timeline-container'
+					onmousedown={toggleScrubbing}
+					onmousemove={handleTimelineUpdate}>
+					<div class='timeline'>
+						<img ref={previewImg} class='preview-img'></img>
+						<div class='thumb-indicator'></div>
+					</div>
+				</div>
 				<div class='controls'>
 					<button class='play-pause-btn' onClick={togglePlay}>
 						{PlayIcon}
@@ -166,41 +277,40 @@ const VideoPlayer: Component<VideoPlayerProps> = (props: VideoPlayerProps) => {
 							max='1'
 							step='any'
 							value={volume()}
-							onChange={volumeChange}></input>
+							onChange={e => volumeChange(e)}></input>
 					</div>
 					<div class='duration-container'>
 						<div class='current-time'>{formatDuration(currentTime())}</div>/
 						<div class='total-time'>{formatDuration(totalTime())}</div>
 					</div>
-					<button class='closed-caption-btn' onClick={toggleCaption}>
-						{ClosedCaptionIcon}
-					</button>
-					<Show when={document.pictureInPictureEnabled}>
+					<Show when={options.captions}>
+						<button class='closed-caption-btn' onClick={toggleCaption}>
+							{ClosedCaptionIcon}
+						</button>
+					</Show>
+					<Show when={options.playSpeed}>
+						<button class='speed-btn wide-btn' onClick={changePlaybackSpeed}>
+							{`${playbackRate()}x`}
+						</button>
+					</Show>
+					<Show when={document.pictureInPictureEnabled && options.miniPlayerMode}>
 						<button class='mini-player-btn' onClick={toggleMiniPlayerMode}>
 							{MiniPlayerIcon}
 						</button>
 					</Show>
-					<button class='theater-btn' onClick={toggleTheaterMode}>
-						{TheaterIcon}
-					</button>
-					<button class='full-screen-btn' onClick={toggleFullScreenMode}>
-						{FullScreenIcon}
-					</button>
+					<Show when={options.theaterMode}>
+						<button class='theater-btn' onClick={toggleTheaterMode}>
+							{TheaterIcon}
+						</button>
+					</Show>
+					<Show when={options.fullScreenMode}>
+						<button class='full-screen-btn' onClick={toggleFullScreenMode}>
+							{FullScreenIcon}
+						</button>
+					</Show>
 				</div>
 			</div>
-			<video
-				ref={video}
-				src={props.src}
-				onVolumeChange={e => {
-					video!.volume = volume()
-					if (video!.muted || video!.volume === 0) {
-						setVolumeLevel(VolumeLevels.MUTED)
-					} else if (video!.volume >= 0.5) {
-						setVolumeLevel(VolumeLevels.HIGH)
-					} else {
-						setVolumeLevel(VolumeLevels.LOW)
-					}
-				}}>
+			<video ref={video} src={options.src}>
 				<track kind='captions' srclang='en' src='src/assets/subtitles.vtt'></track>
 			</video>
 		</div>

@@ -1,8 +1,17 @@
 import type { Component } from 'solid-js'
-import VideoPlayer from './components/VideoPlayer/VideoPlayer'
+import VideoPlayer, { VideoPlayerOptions } from './components/VideoPlayer/VideoPlayer'
 
 const App: Component = () => {
-	return <VideoPlayer src='src/assets/Video.mp4' />
+	const options: VideoPlayerOptions = {
+		src: 'src/assets/Video.mp4',
+		captions: true,
+		playSpeed: true,
+		fullScreenMode: true,
+		miniPlayerMode: true,
+		theaterMode: true,
+	}
+
+	return <VideoPlayer {...options} />
 }
 
 export default App
